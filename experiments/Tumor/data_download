@@ -1,0 +1,3 @@
+wget 'https://zenodo.org/records/5847462/files/KPTracer-Data.tar.gz?download=1' -O data/KPTracer-Data.tar.gz
+tar -xvzf data/KPTracer-Data.tar.gz -C data/
+rm data/KPTracer-Data.tar.gz
