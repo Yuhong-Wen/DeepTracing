@@ -4,8 +4,8 @@ from __future__ import print_function
 
 import numpy as np
 import scanpy as sc
-from TedSim_data_prepare import scaled_Hamming_distance
 from sklearn_extra.cluster import KMedoids
+import torch
 
 
 def normalize(adata,size_factors=True, logtrans_input=True, normalize_input=True):
@@ -35,6 +35,73 @@ def normalize(adata,size_factors=True, logtrans_input=True, normalize_input=True
         sc.pp.scale(adata)
 
     return adata
+
+
+
+def barcode_distances_between_arrays(barcode_array1, barcode_array2):
+    """
+    Calculate all pairwise distances between two barcode arrays and return the distance matrix
+    """
+    num_cells1 = barcode_array1.shape[0]
+    num_cells2 = barcode_array2.shape[0]
+
+    # (num_cells1, num_cells2)
+    distance_matrix = np.zeros((num_cells1, num_cells2))
+
+    for i in range(num_cells1):
+        barcode1 = barcode_array1[i, :]
+        for j in range(num_cells2):
+            barcode2 = barcode_array2[j, :]
+
+            # scaled Hamming distance
+            distance_matrix[i, j] = scaled_Hamming_distance(barcode1, barcode2)
+
+    return distance_matrix
+
+def barcode_distances(barcode_array):
+    """
+    Computes all pairwise lineage distances between barcodes
+    """
+    num_cells = barcode_array.shape[0]
+    lineage_distances = np.zeros([num_cells, num_cells])
+
+    for i in range(num_cells):
+        barcode1 = barcode_array[i,:]
+        for j in range(i):
+            barcode2 = barcode_array[j]
+
+            lineage_distances[i,j] = scaled_Hamming_distance(barcode1, barcode2)
+            lineage_distances[j,i] = lineage_distances[i,j]
+    return lineage_distances
+
+
+def scaled_Hamming_distance(barcode1, barcode2):
+    """
+    Computes the distance between two barcodes, adjusted for
+
+    (1) the number of sites where both cells were measured and
+
+    (2) distance between two scars is twice the distance from
+
+        scarred to unscarred
+    """
+    shared_indices = (barcode1 >= 0) & (barcode2 >= 0)
+    b1 = barcode1[shared_indices]
+
+    # There may not be any sites where both were measured
+    if len(b1) == 0:
+        return np.nan
+    b2 = barcode2[shared_indices]
+
+    differences = b1 != b2
+    double_scars = differences & (b1 != 0) & (b2 != 0)
+
+    if isinstance(differences, torch.Tensor):
+        differences = differences.cpu().numpy()
+    if isinstance(double_scars, torch.Tensor):
+        double_scars = double_scars.cpu().numpy()
+
+    return (np.sum(differences) + np.sum(double_scars)) / len(b1)
 
 
 def inducing_points_select(adata, barcodes, select_feature, all_indices,

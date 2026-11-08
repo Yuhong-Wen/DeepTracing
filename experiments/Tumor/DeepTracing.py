@@ -1,8 +1,10 @@
 import math
-from torch.utils.data import DataLoader, TensorDataset, random_split
+from torch.utils.data import random_split
 from torch.distributions.normal import Normal
 from torch.distributions import kl_divergence
-from SVGP import  SVGP
+import numpy as np
+import pandas as pd
+from SVGP import SVGP
 from I_PID import PIDControl
 from VAE_utils import *
 from collections import deque
@@ -55,12 +57,11 @@ class EarlyStopping:
 
 
 class DEEPTRACING(nn.Module):
-    def __init__(self, input_dim, GP_dim, Normal_dim, encoder_layers, decoder_layers, noise, encoder_dropout, decoder_dropout,
-                    distance,initial_inducing_points, fixed_inducing_points, fixed_gp_params, kernel_scale, N_train,
-                    KL_loss, dynamicVAE, init_beta_gaussian, min_beta_gaussian, max_beta_gaussian,init_beta_gp, min_beta_gp, max_beta_gp, dtype, device, lambda_tc):
+    def __init__(self, input_dim, GP_dim, Normal_dim, encoder_layers, decoder_layers, noise, encoder_dropout, decoder_dropout,distance,initial_inducing_points,fixed_inducing_points, fixed_gp_params, kernel_scale, N_train,
+                    KL_loss, dynamicVAE, init_beta_gaussian, min_beta_gaussian, max_beta_gaussian, init_beta_gp, min_beta_gp, max_beta_gp, dtype, device):
         super(DEEPTRACING, self).__init__()
         torch.set_default_dtype(dtype)
-        self.svgp = SVGP(distance=distance,initial_inducing_points=initial_inducing_points, fixed_inducing_points=fixed_inducing_points,
+        self.svgp = SVGP(distance=distance, initial_inducing_points=initial_inducing_points, fixed_inducing_points=fixed_inducing_points,
                 fixed_gp_params=fixed_gp_params, kernel_scale=kernel_scale, jitter=1e-8, N_train=N_train, dtype=dtype, device=device)
         self.input_dim = input_dim
         self.PID_gaussian = PIDControl(Kp=0.01, Ki=-0.005, init_beta=init_beta_gaussian, min_beta=min_beta_gaussian, max_beta=max_beta_gaussian)
@@ -69,7 +70,7 @@ class DEEPTRACING(nn.Module):
         self.dynamicVAE = dynamicVAE
         self.beta_gaussian = init_beta_gaussian           # beta controls the weight of reconstruction loss
         self.beta_gp = init_beta_gp
-        self.lambda_tc = lambda_tc
+
         self.dtype = dtype
         self.GP_dim = GP_dim            # dimension of latent Gaussian process embedding
         self.Normal_dim = Normal_dim    # dimension of latent standard Gaussian embedding
@@ -84,7 +85,6 @@ class DEEPTRACING(nn.Module):
         self.dec_disp = nn.Parameter(torch.randn(self.input_dim), requires_grad=True)       # trainable dispersion parameter for NB loss
 
         self.NB_loss = NBLoss().to(self.device)
-        self.MSELoss = MSELoss().to(self.device)
         self.to(device)
 
         self.log = {"validate_elbo_val":[]}
@@ -102,7 +102,6 @@ class DEEPTRACING(nn.Module):
 
 
     def forward(self, x, y, raw_y, size_factors, num_samples=1):
-
         self.train()
         b = y.shape[0]
         qnet_mu, qnet_var = self.encoder(y)
@@ -116,7 +115,7 @@ class DEEPTRACING(nn.Module):
         inside_elbo_recon, inside_elbo_kl = [], []
         gp_p_m, gp_p_v = [], []
         for l in range(self.GP_dim):
-            gp_p_m_l, gp_p_v_l, mu_hat_l, A_hat_l = self.svgp.approximate_posterior_params(x, x,
+            gp_p_m_l, gp_p_v_l, mu_hat_l, A_hat_l = self.svgp.approximate_posterior_params(x,x,
                                                                     gp_mu[:, l], gp_var[:, l])
             inside_elbo_recon_l,  inside_elbo_kl_l = self.svgp.variational_loss(x=x, y=gp_mu[:, l],
                                                                     noise=gp_var[:, l], mu_hat=mu_hat_l,
@@ -126,7 +125,6 @@ class DEEPTRACING(nn.Module):
             inside_elbo_kl.append(inside_elbo_kl_l)
             gp_p_m.append(gp_p_m_l)
             gp_p_v.append(gp_p_v_l)
-
         inside_elbo_recon = torch.stack(inside_elbo_recon, dim=-1)
         inside_elbo_kl = torch.stack(inside_elbo_kl, dim=-1)
         inside_elbo_recon = torch.sum(inside_elbo_recon)
@@ -169,20 +167,7 @@ class DEEPTRACING(nn.Module):
             mean_samples.append(mean_samples_)
             disp_samples.append(disp_samples_)
             recon_loss += self.NB_loss(x=raw_y, mean=mean_samples_, disp=disp_samples_, scale_factor=size_factors)
-            # recon_loss += self.MSELoss(x=y, mean=mean_samples_,scale_factor=size_factors)
         recon_loss = recon_loss / num_samples
-
-        tc_loss = 0
-        if num_samples > 0:
-            for i in range(num_samples):
-                std = torch.sqrt(p_v)
-                eps = torch.randn_like(std)
-                z_samples = p_m + eps * std
-                log_qz, log_qz_prod = self.estimate_log_qz(z_samples, p_m, torch.log(p_v + 1e-6))
-                tc_loss += (log_qz - log_qz_prod).mean()
-
-            tc_loss = tc_loss / num_samples
-
 
         noise_reg = 0
         if self.noise > 0:
@@ -208,27 +193,23 @@ class DEEPTRACING(nn.Module):
 
         if self.noise > 0:
             elbo = recon_loss + noise_reg * self.input_dim / self.GP_dim + \
-                   self.beta_gp * gp_KL_term + self.beta_gaussian * gaussian_KL_term + \
-                   self.lambda_tc * tc_loss
+                   self.beta_gp * gp_KL_term + self.beta_gaussian * gaussian_KL_term
+
         else:
             elbo = recon_loss + self.beta_gp * gp_KL_term + \
-                   self.beta_gaussian * gaussian_KL_term + self.lambda_tc * tc_loss
+                   self.beta_gaussian * gaussian_KL_term
+
+        # # ELBO
+        # if self.noise > 0 :
+        #     elbo = recon_loss + noise_reg * self.input_dim / self.GP_dim + self.beta_gp * gp_KL_term + self.beta_gaussian * gaussian_KL_term
+        # else:
+        #     elbo = recon_loss + self.beta_gp * gp_KL_term + self.beta_gaussian * gaussian_KL_term
 
         return elbo, recon_loss, gp_KL_term, gaussian_KL_term, inside_elbo, gp_ce_term, gp_p_m, gp_p_v, qnet_mu, qnet_var, \
-            mean_samples, disp_samples, inside_elbo_recon, inside_elbo_kl, latent_samples, noise_reg, tc_loss
+            mean_samples, disp_samples, inside_elbo_recon, inside_elbo_kl, latent_samples, noise_reg
 
 
     def batching_latent_samples(self, X, Y, batch_size=512):
-        """
-        Output latent embedding.
-
-        Parameters:
-        -----------
-        X: Lineage information.
-        Y: array_like, shape (n_spots, n_genes)
-            Preprocessed count matrix.
-        """
-
         self.eval()
 
         X = torch.tensor(X, dtype=self.dtype)
@@ -254,7 +235,7 @@ class DEEPTRACING(nn.Module):
 
             gp_p_m, gp_p_v = [], []
             for l in range(self.GP_dim):
-                gp_p_m_l, gp_p_v_l, _, _ = self.svgp.approximate_posterior_params_big_data(xbatch, xbatch, gp_mu[:, l], gp_var[:, l])
+                gp_p_m_l, gp_p_v_l, _, _ = self.svgp.approximate_posterior_params(xbatch, xbatch, gp_mu[:, l], gp_var[:, l])
                 gp_p_m.append(gp_p_m_l)
                 gp_p_v.append(gp_p_v_l)
 
@@ -275,41 +256,88 @@ class DEEPTRACING(nn.Module):
         return latent_samples.numpy(),gp_latents.numpy(), gaussian_latents.numpy()
 
 
+    def batching_denoise_counts(self, X, Y, n_samples=1, batch_size=512):
+
+        self.eval()
+
+        X = torch.tensor(X, dtype=self.dtype)
+        Y = torch.tensor(Y, dtype=self.dtype)
+
+        mean_samples = []
+
+        num = X.shape[0]
+        num_batch = int(math.ceil(1.0*X.shape[0]/batch_size))
+        for batch_idx in range(num_batch):
+            xbatch = X[batch_idx*batch_size : min((batch_idx+1)*batch_size, num)].to(self.device)
+            ybatch = Y[batch_idx*batch_size : min((batch_idx+1)*batch_size, num)].to(self.device)
+
+            qnet_mu, qnet_var = self.encoder(ybatch)
+
+            gp_mu = qnet_mu[:, 0:self.GP_dim]
+            gp_var = qnet_var[:, 0:self.GP_dim]
+
+            gaussian_mu = qnet_mu[:, self.GP_dim:]
+            gaussian_var = qnet_var[:, self.GP_dim:]
+
+            gp_p_m, gp_p_v = [], []
+            for l in range(self.GP_dim):
+                gp_p_m_l, gp_p_v_l, _, _ = self.svgp.approximate_posterior_params(xbatch, xbatch, gp_mu[:, l], gp_var[:, l])
+                gp_p_m.append(gp_p_m_l)
+                gp_p_v.append(gp_p_v_l)
+
+            gp_p_m = torch.stack(gp_p_m, dim=1)
+            gp_p_v = torch.stack(gp_p_v, dim=1)
+
+            # SAMPLE
+            p_m = torch.cat((gp_p_m, gaussian_mu), dim=1)
+            p_v = torch.cat((gp_p_v, gaussian_var), dim=1)
+            latent_dist = Normal(p_m, torch.sqrt(p_v))
+            latent_samples = []
+            for _ in range(n_samples):
+                latent_samples_ = latent_dist.sample()
+                latent_samples.append(latent_samples_)
+
+            mean_samples_ = []
+            for f in latent_samples:
+                hidden_samples = self.decoder(f)
+                mean_samples_f = self.dec_mean(hidden_samples)
+                mean_samples_.append(mean_samples_f)
+
+            mean_samples_ = torch.stack(mean_samples_, dim=0)
+            mean_samples_ = torch.mean(mean_samples_, dim=0)
+            mean_samples.append(mean_samples_.data.cpu().detach())
+
+        mean_samples = torch.cat(mean_samples, dim=0)
+
+        return mean_samples.numpy()
+
+
+    def batching_recon_samples(self, Z, batch_size=512):
+        self.eval()
+
+        Z = torch.tensor(Z, dtype=self.dtype)
+
+        recon_samples = []
+
+        num = Z.shape[0]
+        num_batch = int(math.ceil(1.0*Z.shape[0]/batch_size))
+        for batch_idx in range(num_batch):
+            zbatch = Z[batch_idx*batch_size : min((batch_idx+1)*batch_size, num)].to(self.device)
+            h = self.decoder(zbatch)
+            mean_batch = self.dec_mean(h)
+            recon_samples.append(mean_batch.data.cpu().detach())
+
+        recon_samples = torch.cat(recon_samples, dim=0)
+
+        return recon_samples.numpy()
+
     def train_model(self, indices, ncounts, raw_counts, size_factors, lr=0.001, weight_decay=0.001, batch_size=512, num_samples=1,
             train_size=0.95, maxiter=5000, patience=200, save_model=True, model_weights="model.pt", print_kernel_scale=True):
-        """
-        Model training.
-
-        Parameters:
-        -----------
-        indices:
-            Message used to extract distance.
-        ncounts: array_like, shape (n_spots, n_genes)
-            Preprocessed count matrix.
-        raw_counts: array_like, shape (n_spots, n_genes)
-            Raw count matrix.
-        size_factor: array_like, shape (n_spots)
-            The size factor of each spot, which need for the NB loss.
-        lr: float, defalut = 0.001
-            Learning rate for the opitimizer.
-        weight_decay: float, default = 0.001
-            Weight decay for the opitimizer.
-        train_size: float, default = 0.95
-            proportion of training size, the other samples are validations.
-        maxiter: int, default = 5000
-            Maximum number of iterations.
-        patience: int, default = 200
-            Patience for early stopping.
-        model_weights: str
-            File name to save the model weights.
-        print_kernel_scale: bool
-            Whether to print current kernel scale during training steps.
-        """
-
         self.train()
 
         dataset = TensorDataset(torch.tensor(indices, dtype=self.dtype), torch.tensor(ncounts, dtype=self.dtype),
-                        torch.tensor(raw_counts, dtype=self.dtype), torch.tensor(size_factors, dtype=self.dtype))
+                        torch.tensor(raw_counts, dtype=self.dtype),
+                                torch.tensor(size_factors, dtype=self.dtype))
 
         if train_size < 1:
             train_size_int = int(len(dataset) * train_size)
@@ -337,7 +365,6 @@ class DEEPTRACING(nn.Module):
             recon_loss_val = 0
             gp_KL_term_val = 0
             gaussian_KL_term_val = 0
-            tc_loss_val = 0
             noise_reg_val = 0
             num = 0
             for batch_idx, (indices_batch, y_batch, y_raw_batch, sf_batch) in enumerate(dataloader):
@@ -347,7 +374,7 @@ class DEEPTRACING(nn.Module):
                 sf_batch = sf_batch.to(self.device)
 
                 elbo, recon_loss, gp_KL_term, gaussian_KL_term, inside_elbo, gp_ce_term, p_m, p_v, qnet_mu, qnet_var, \
-                    mean_samples, disp_samples, inside_elbo_recon, inside_elbo_kl, latent_samples, noise_reg, tc_loss = \
+                    mean_samples, disp_samples, inside_elbo_recon, inside_elbo_kl, latent_samples, noise_reg = \
                     self.forward(x=indices_batch, y=y_batch, raw_y=y_raw_batch, size_factors=sf_batch, num_samples=num_samples)
             # return elbo, recon_loss, gp_KL_term, gaussian_KL_term, inside_elbo, gp_ce_term, gp_p_m, gp_p_v, qnet_mu, qnet_var, \
                 #             mean_samples, disp_samples, inside_elbo_recon, inside_elbo_kl, latent_samples, noise_reg
@@ -359,7 +386,7 @@ class DEEPTRACING(nn.Module):
                 recon_loss_val += recon_loss.item()
                 gp_KL_term_val += gp_KL_term.item()
                 gaussian_KL_term_val += gaussian_KL_term.item()
-                tc_loss_val += tc_loss.item()
+
                 if self.noise > 0:
                     noise_reg_val += noise_reg.item()
 
@@ -369,7 +396,7 @@ class DEEPTRACING(nn.Module):
                     KL_val = (gp_KL_term.item() + gaussian_KL_term.item()) / indices_batch.shape[0]
                     queue.append(KL_val)
                     avg_KL = np.mean(queue)
-                    self.beta_gaussain, _ = self.PID_gaussian.pid(self.KL_loss*(self.GP_dim+self.Normal_dim), avg_KL)
+                    self.beta_gaussian, _ = self.PID_gaussian.pid(self.KL_loss*(self.GP_dim+self.Normal_dim), avg_KL)
                     self.beta_gp, _ = self.PID_gp.pid(self.KL_loss*(self.GP_dim+self.Normal_dim), avg_KL)
                     if len(queue) >= 10:
                         queue.popleft()
@@ -379,14 +406,14 @@ class DEEPTRACING(nn.Module):
             recon_loss_val = recon_loss_val/num
             gp_KL_term_val = gp_KL_term_val/num
             gaussian_KL_term_val = gaussian_KL_term_val/num
-            tc_loss_val = tc_loss_val / num
+
             noise_reg_val = noise_reg_val/num
 
             print(
-                'Training epoch {}, ELBO:{:.8f}, NB loss:{:.8f}, GP KLD loss:{:.8f}, Gaussian KLD loss:{:.8f},TC loss:{:.8f}, noise regularization:{:8f}'.format(
-                    epoch + 1, elbo_val, recon_loss_val, gp_KL_term_val, gaussian_KL_term_val, tc_loss_val,
+                'Training epoch {}, ELBO:{:.8f}, NB loss:{:.8f}, GP KLD loss:{:.8f}, Gaussian KLD loss:{:.8f}, noise regularization:{:8f}'.format(
+                    epoch + 1, elbo_val, recon_loss_val, gp_KL_term_val, gaussian_KL_term_val,
                     noise_reg_val))
-            print('Current beta_gaussain', self.beta_gaussain)
+            print('Current beta_gaussian', self.beta_gaussian)
             print('Current beta_gp', self.beta_gp)
             if print_kernel_scale:
                 print('Current kernel scale', torch.clamp(F.softplus(self.svgp.kernel.scale), min=1e-10, max=1e4).data)
@@ -400,8 +427,8 @@ class DEEPTRACING(nn.Module):
                     validate_y_raw_batch = validate_y_raw_batch.to(self.device)
                     validate_sf_batch = validate_sf_batch.to(self.device)
 
-                    validate_elbo, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ = \
-                        self.forward(validate_indices_batch, y=validate_y_batch, raw_y=validate_y_raw_batch, size_factors=validate_sf_batch, num_samples=num_samples)
+                    validate_elbo, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ = \
+                        self.forward(x=validate_indices_batch, y=validate_y_batch, raw_y=validate_y_raw_batch, size_factors=validate_sf_batch, num_samples=num_samples)
 
                     validate_elbo_val += validate_elbo.item()
                     validate_num += validate_indices_batch.shape[0]
@@ -427,29 +454,3 @@ class DEEPTRACING(nn.Module):
         plt.ylabel("validate_elbo_val")
         plt.title('Loss curve')
         plt.show()
-
-
-
-    def estimate_log_qz(self, samples, mu, logvar):
-        B, D = samples.size()
-
-        samples_i = samples.unsqueeze(1)
-        mu_j = mu.unsqueeze(0)
-        logvar_j = logvar.unsqueeze(0)
-        var_j = logvar_j.exp()
-
-        log_2pi = torch.log(torch.tensor(2.0 * torch.pi, device=samples.device))
-
-        log_probs = -0.5 * (
-                log_2pi + logvar_j + (samples_i - mu_j) ** 2 / var_j
-        )
-
-        log_qz_cond_x = log_probs.sum(2)
-        log_qz = torch.logsumexp(log_qz_cond_x, dim=1) - torch.log(
-            torch.tensor(B, dtype=torch.float32, device=samples.device))
-
-        log_qz_prod = torch.logsumexp(log_probs, dim=1) - torch.log(
-            torch.tensor(B, dtype=torch.float32, device=samples.device))
-        log_qz_prod = log_qz_prod.sum(1)
-
-        return log_qz, log_qz_prod

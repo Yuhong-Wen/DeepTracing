@@ -4,13 +4,12 @@ from training import train, train_triplet
 from pathlib import Path
 import numpy as np
 import scanpy as sc
-from preprocess import normalize
 import torch
 from tqdm import trange
 
 torch.manual_seed(0)
 
-data_path = '/data/DeepTracing/experiments/Tumor/data'
+data_path = '.../data'
 name = '3515_Lkb1_T1_Fam'
 
 results_path = Path(f"./results")
@@ -29,6 +28,23 @@ else:
 pruned_adata.X = dense_array
 
 sc.pp.highly_variable_genes(pruned_adata, flavor="seurat_v3", n_top_genes=200, subset=True)
+
+def normalize(adata,size_factors=True, logtrans_input=True, normalize_input=True):
+    adata.raw = adata.copy()
+    if size_factors:
+        sc.pp.normalize_per_cell(adata)
+        adata.obs['size_factors'] = adata.obs.n_counts / np.median(adata.obs.n_counts)
+    else:
+        adata.obs['size_factors'] = 1.0
+
+    if logtrans_input:
+        sc.pp.log1p(adata)
+
+
+    if normalize_input:
+        sc.pp.scale(adata)
+
+    return adata
 
 adata = normalize(pruned_adata,
                   size_factors=True,

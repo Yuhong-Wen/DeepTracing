@@ -27,25 +27,10 @@ class SVGP(nn.Module):
         # self.kernel = Cauchy_Kernel(scale=kernel_scale, fixed_scale=fixed_gp_params, distance=distance,dtype=dtype, device=device).to(device)
 
     def kernel_matrix(self, x, y):
-        """
-        Computes GP kernel matrix K(x,y).
-        :param x:
-        :param y:
-        :return:
-        """
         matrix = self.kernel( x, y)
         return matrix
 
     def variational_loss(self, x, y, noise, mu_hat, A_hat):
-        """
-        Computes L_H for the data in the current batch.
-        :param x: auxiliary data for current batch (batch, 1 + 1 + M)
-        :param y: mean vector for current latent channel, output of the encoder network (batch, 1)
-        :param noise: variance vector for current latent channel, output of the encoder network (batch, 1)
-        :param mu_hat:
-        :param A_hat:
-        :return: sum_term, KL_term (variational loss = sum_term + KL_term)  (1,)
-        """
         b = x.shape[0]
         m = self.inducing_index_points.shape[0]
 
@@ -94,15 +79,6 @@ class SVGP(nn.Module):
         return L_3_sum_term, KL_term
 
     def approximate_posterior_params(self, x_test,x_train=None, y=None, noise=None):
-        """
-        Computes parameters of q_S.
-        :param index_points_test: X_*
-        :param index_points_train: X_Train
-        :param y: y vector of latent GP
-        :param noise: noise vector of latent GP
-        :return: posterior mean at index points,
-                 (diagonal of) posterior covariance matrix at index points
-        """
         b = x_train.shape[0]
 
         K_mm = self.kernel_matrix(self.inducing_index_points,self.inducing_index_points) # (m,m)

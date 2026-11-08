@@ -8,7 +8,6 @@ from sklearn_extra.cluster import KMedoids
 import dendropy
 
 
-
 def get_top_down_cluster_ids(tree_path, labels, depth=2):
   tree = dendropy.Tree.get(path=tree_path, schema='newick')
   cluster_roots = [tree.seed_node]
@@ -57,6 +56,27 @@ def normalize(adata,size_factors=True, logtrans_input=True, normalize_input=True
         sc.pp.scale(adata)
 
     return adata
+
+
+
+def get_top_down_cluster_ids(tree_path, labels, depth=2):
+  tree = dendropy.Tree.get(path=tree_path, schema='newick')
+  cluster_roots = [tree.seed_node]
+  for i in range(depth):
+    cluster_children = []
+    for root in cluster_roots:
+      if root.is_leaf():
+        cluster_children.append(root)
+      else:
+        cluster_children.extend(list(root.child_node_iter()))
+    cluster_roots = cluster_children
+  labels_to_ids = {}
+  cluster_id = 1
+  for root in cluster_roots:
+    for node in root.leaf_nodes():
+      labels_to_ids[node.taxon.label] = cluster_id
+    cluster_id += 1
+  return np.array([node.label for node in cluster_roots]), np.array([labels_to_ids[x] for x in labels])
 
 
 def inducing_points_select_tumor(adata, distance_matrix, select_feature, all_indices,
