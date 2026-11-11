@@ -45,7 +45,7 @@ if __name__ == "__main__":
     parser.add_argument('--fixed_gp_params', default=False, type=bool)
     parser.add_argument('--loc_range', default=20., type=float)
     parser.add_argument('--kernel_scale', default=20., type=float)
-    parser.add_argument('--model_file', default='3723_model.pt')
+    parser.add_argument('--model_file', default='3724_model.pt')
     parser.add_argument('--final_latent_file', default='3724_final_latent.txt')
     parser.add_argument('--gp_latent_file', default='3724_gp_latent_beta.txt')
     parser.add_argument('--gaussian_latent_file', default='3724_gaussian_latent.txt')
