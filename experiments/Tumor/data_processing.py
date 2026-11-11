@@ -489,7 +489,7 @@ if __name__ == "__main__":
     preprocess_adata_Fam(adata = adata, name = '3515_Lkb1_T1_Fam', prefix= '3515_Lkb1',
                      data_path = data_path, meta_df = meta_df)
 
-    preprocess_adata_big_num(adata = adata, name = '3724_NT_T1',
+    preprocess_adata_big_num(adata = adata, name = '3724_NT_All',
                      data_path = data_path, meta_df = meta_df)
 
 
