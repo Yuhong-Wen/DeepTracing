@@ -18,3 +18,6 @@ exclude_patterns = [
     "_build",
     "**/.ipynb_checkpoints",
 ]
+
+html_static_path = ["_static"]
+html_css_files = ["custom.css"]

@@ -1,0 +1,8 @@
+/* Scrollable training logs in the Model Training section */
+
+#model-training .nboutput pre {
+    max-height: 350px;
+    overflow-y: auto;
+    overflow-x: auto;
+    white-space: pre;
+}
