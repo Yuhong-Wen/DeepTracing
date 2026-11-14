@@ -357,7 +357,6 @@ dependencies:
       - pygsp==0.5.1
       - rich==15.0.0
       - s-gd2==1.8.1
-      - scib==1.1.7
       - scib-metrics==0.5.1
       - scikit-bio==0.5.6
       - scikit-learn-extra==0.3.0
