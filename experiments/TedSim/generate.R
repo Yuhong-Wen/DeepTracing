@@ -23,7 +23,7 @@ unif_on <- FALSE
 
 
 generate <- function(p_a) {
-    modifier <- paste("", p_a, cif_step, sep = "_")
+    modifier <- paste0("_", p_a)
     set.seed(0)
 
     output_dir <- paste0("D:/data/DeepTracing/experiments/TedSim/data/", p_a)
