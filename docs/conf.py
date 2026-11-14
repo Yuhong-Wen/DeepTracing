@@ -21,3 +21,8 @@ exclude_patterns = [
 
 html_static_path = ["_static"]
 html_css_files = ["custom.css"]
+
+rst_prolog = """
+.. role:: coming-soon
+   :class: coming-soon
+"""

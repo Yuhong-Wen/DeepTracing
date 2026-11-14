@@ -11,3 +11,8 @@ div.nboutput > div.output_area:has(pre) {
 div.nboutput > div.output_area pre {
     white-space: pre;
 }
+
+.coming-soon {
+    color: #d32f2f;
+    font-weight: 600;
+}
